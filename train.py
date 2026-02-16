@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import json
 import os
 import torch
 from random import randint
@@ -27,10 +28,47 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+    
+class Timer:
+    def __init__(self):
+        self._iter_start = torch.cuda.Event(enable_timing = True)
+        self._iter_end = torch.cuda.Event(enable_timing = True)
+        self._optim_start = torch.cuda.Event(enable_timing = True)
+        self._optim_end = torch.cuda.Event(enable_timing = True)
+        self.total_render_time = 0.0
+        self.total_optim_time = 0.0
+    
+    def iter_start(self):
+        self._iter_start.record()
+    
+    def iter_end(self):
+        self._iter_end.record()
+        torch.cuda.synchronize()
+        self.total_render_time += self._iter_start.elapsed_time(self._iter_end) / 1e3 # ms to s
+
+    def optim_start(self):
+        self._optim_start.record()
+
+    def optim_end(self):
+        self._optim_end.record()
+        torch.cuda.synchronize()
+        self.total_optim_time += self._optim_start.elapsed_time(self._optim_end) / 1e3 # ms to s
+        
+    @property
+    def total_times(self):
+        return self.total_render_time + self.total_optim_time
+
+    @property
+    def metrics(self):
+        return {
+            "train_times": self.total_times,
+            "train_render_times": self.total_render_time,
+            "train_optimal_times": self.total_optim_time
+        }
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -51,9 +89,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    timer = Timer()
     for iteration in range(first_iter, opt.iterations + 1):        
 
-        iter_start.record()
+        # iter_start.record()
+        timer.iter_start()
 
         gaussians.update_learning_rate(iteration)
 
@@ -89,7 +129,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         total_loss.backward()
 
-        iter_end.record()
+        # iter_end.record()
+        timer.iter_end()
 
         with torch.no_grad():
             # Progress bar
@@ -112,16 +153,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            if tb_writer is not None:
-                tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
-                tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+            # if tb_writer is not None:
+            #     tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
+            #     tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
 
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
-
+            timer.optim_start()
             # Densification
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -138,34 +179,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+            timer.optim_end()
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-        with torch.no_grad():        
-            if network_gui.conn == None:
-                network_gui.try_connect(dataset.render_items)
-            while network_gui.conn != None:
-                try:
-                    net_image_bytes = None
-                    custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
-                    if custom_cam != None:
-                        render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifer)   
-                        net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
-                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                    metrics_dict = {
-                        "#": gaussians.get_opacity.shape[0],
-                        "loss": ema_loss_for_log
-                        # Add more metrics as needed
-                    }
-                    # Send the data
-                    network_gui.send(net_image_bytes, dataset.source_path, metrics_dict)
-                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                        break
-                except Exception as e:
-                    # raise e
-                    network_gui.conn = None
+        with torch.no_grad():
+            if network_gui is not None:
+                if network_gui.conn == None:
+                    network_gui.try_connect(dataset.render_items)
+                while network_gui.conn != None:
+                    try:
+                        net_image_bytes = None
+                        custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
+                        if custom_cam != None:
+                            render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifer)   
+                            net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
+                            net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+                        metrics_dict = {
+                            "#": gaussians.get_opacity.shape[0],
+                            "loss": ema_loss_for_log
+                            # Add more metrics as needed
+                        }
+                        # Send the data
+                        network_gui.send(net_image_bytes, dataset.source_path, metrics_dict)
+                        if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                            break
+                    except Exception as e:
+                        # raise e
+                        network_gui.conn = None
+    print(f"Gaussian number: {gaussians._xyz.shape[0]}")
+    with open(os.path.join(args.model_path, "training_time.json"), 'w') as f:
+        json.dump(timer.metrics, f)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -263,6 +309,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--disable_viewer", action="store_true", default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -272,8 +319,12 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    if not args.disable_viewer:
+        network_gui.init(args.ip, args.port)
+    else:
+        network_gui = None
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    prepare_output_and_logger(args)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
 
     # All done
