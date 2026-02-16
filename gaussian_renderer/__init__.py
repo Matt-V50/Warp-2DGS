@@ -11,7 +11,8 @@
 
 import torch
 import math
-from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+# from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_surfel_rasterization_dev import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
@@ -47,6 +48,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
+        T_limit=pipe.T_limit
         # pipe.debug
     )
 
@@ -55,6 +57,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
+    inter_points = pc.get_inter_points
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -95,6 +98,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
     rendered_image, radii, allmap = rasterizer(
+        inter_points = inter_points,
         means3D = means3D,
         means2D = means2D,
         shs = shs,
