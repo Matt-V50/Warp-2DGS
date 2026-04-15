@@ -23,6 +23,9 @@ from tqdm import tqdm
 from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import wandb
+
+# from utils.fast_utils import compute_gaussian_score_fastgs, sampling_cameras
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -65,11 +68,56 @@ class Timer:
             "train_render_times": self.total_render_time,
             "train_optimal_times": self.total_optim_time
         }
+        
+class Logger:
+    def __init__(self, args):
+        self.experiment = args.model_path.split("/")[-4]  # Assuming model path is like "output/experiment_name/Mip-NeRF360/360_v2/scene_name"
+        self.scene = "/".join(args.model_path.split("/")[-2:])
+        self.args = args
+        self.wandb = args.wandb
+        
+    def init(self):
+        if not self.wandb: return
+        wandb.init(project=self.experiment, 
+            name=self.scene,
+            config=vars(args)
+        )
+    
+    def finish(self):
+        if not self.wandb: return
+        wandb.finish()
+    
+    def log(self, gaussians, loss, opt, iteration):
+        if not self.wandb: return
+        grad = torch.norm(gaussians._xyz.grad.detach(), dim=-1).cpu()
+        scaling = gaussians.get_scaling.detach().cpu()
+        scaling_norm = torch.norm(scaling, dim=-1)
+        scaling_max = torch.max(scaling, dim=1).values
+        scaling_ratio = (scaling[:, 0] / (scaling[:, 1] + 1e-8))
+        log_dict = {
+            "iteration": iteration,
+            "grad_xyz/mean": grad.mean().item(),
+            "grad_xyz/max":  grad.max().item(),
+            "grad_xyz/min":  grad.min().item(),
+            "grad_xyz/q25":  grad.quantile(0.25).item(),
+            "grad_xyz/q50":  grad.quantile(0.50).item(),
+            "grad_xyz/q75":  grad.quantile(0.75).item(),
+            "grad_xyz/histogram": wandb.Histogram(grad),
+            'grad_xyz/percentile': (grad < opt.densify_grad_threshold).float().mean().item() * 100,
+            'number': gaussians._xyz.shape[0],
+            "scaling/xy": wandb.Histogram(scaling),
+            "scaling/norm": wandb.Histogram(scaling_norm),
+            "scaling/max": wandb.Histogram(scaling_max),
+            "scaling/ratio": wandb.Histogram(scaling_ratio),
+            "loss": loss.item(),
+        }
+        
+        wandb.log(log_dict)
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
     
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree, control_points=2, dof=1)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -126,11 +174,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # loss
         total_loss = loss + dist_loss + normal_loss
-        
-        total_loss.backward()
+        try:
+            total_loss.backward()
+        except RuntimeError as e:
+            1+1
 
         # iter_end.record()
         timer.iter_end()
+            
+        logger.log(gaussians, loss, opt, iteration)
 
         with torch.no_grad():
             # Progress bar
@@ -144,7 +196,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
-                    "Points": f"{len(gaussians.get_xyz)}"
+                    "Points": f"{len(gaussians._xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -310,6 +362,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--disable_viewer", action="store_true", default=False)
+    parser.add_argument("--wandb", action="store_true", default=False, help="Whether to log to Weights and Biases")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -325,7 +378,9 @@ if __name__ == "__main__":
         network_gui = None
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     prepare_output_and_logger(args)
+    logger = Logger(args)
+    logger.init()
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
-
+    logger.finish()
     # All done
     print("\nTraining complete.")

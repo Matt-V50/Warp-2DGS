@@ -9,12 +9,16 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+from pathlib import Path
+from typing import List, Optional
+
 import torch
 from scene import Scene
 import os
 import json
 from tqdm import tqdm
 from gaussian_renderer import render
+from scene.cameras import Camera
 from utils.general_utils import safe_state
 from utils.loss_utils import ssim
 from utils.image_utils import psnr
@@ -23,6 +27,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPI
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+from utils.render_utils import save_img_u8
 
 lpips_model = LPIPSTorch(net_type="vgg", normalize=True).to(torch.device("cuda"))
 lpips_model.eval()
@@ -32,7 +37,7 @@ def lpips(x, y):
     y = torch.clamp(y, 0.0, 1.0)
     return lpips_model(x, y)
 
-def evaluate_set(name, views, gaussians, pipeline, background):
+def evaluate_set(name, views: List[Camera], gaussians, pipeline, background, save_path:Optional[Path]=None):
     """
     Evaluate metrics for a set of views without saving images to disk.
     
@@ -60,6 +65,11 @@ def evaluate_set(name, views, gaussians, pipeline, background):
         # Add batch dimension for metric computation
         rendering = rendering.unsqueeze(0)
         gt = gt.unsqueeze(0)
+        
+        if save_path:
+            save_path.mkdir(parents=True, exist_ok=True)
+            # save the image
+            save_img_u8(rendering[0].permute(1,2,0).cpu().numpy(), save_path / f'{view.image_name}.png')
         
         # Compute metrics
         ssim_val = ssim(rendering, gt)
@@ -91,7 +101,7 @@ def evaluate_set(name, views, gaussians, pipeline, background):
 
 
 def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams, 
-                 skip_train: bool, skip_test: bool, save_results: bool = True):
+                 skip_train: bool, skip_test: bool, save_results: bool = True, save_image: bool = False):
     """
     Evaluate metrics for train and test sets.
     
@@ -112,6 +122,9 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
         
         full_dict = {"count": scene.gaussians.get_xyz.shape[0]}
         per_view_dict = {}
+        save_path = None
+        if save_image:
+            save_path = Path(dataset.model_path)
         
         # Evaluate train set
         if not skip_train:
@@ -119,9 +132,10 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
             print("Evaluating Train Set")
             print("="*50)
             
+            save_path_train = save_path / "train" if save_path else None
             train_views = scene.getTrainCameras()
             train_mean, train_per_view = evaluate_set(
-                "train", train_views, gaussians, pipeline, background
+                "train", train_views, gaussians, pipeline, background, save_path_train
             )
             
             full_dict["train"] = train_mean
@@ -139,8 +153,9 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
             print("="*50)
             
             test_views = scene.getTestCameras()
+            save_path_test = save_path / "test" if save_path else None
             test_mean, test_per_view = evaluate_set(
-                "test", test_views, gaussians, pipeline, background
+                "test", test_views, gaussians, pipeline, background, save_path_test
             )
             
             full_dict["test"] = test_mean
@@ -181,6 +196,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true", help="Skip train set evaluation")
     parser.add_argument("--skip_test", action="store_true", help="Skip test set evaluation")
     parser.add_argument("--no_save", action="store_true", help="Do not save results to JSON files")
+    parser.add_argument("--save_image", action="store_true", help="Save rendered images to disk", default=False)
     parser.add_argument("--quiet", action="store_true", help="Suppress progress bars")
     args = get_combined_args(parser)
     
@@ -206,4 +222,5 @@ if __name__ == "__main__":
             args.skip_train, 
             args.skip_test,
             save_results=not args.no_save,
+            save_image=args.save_image
         )

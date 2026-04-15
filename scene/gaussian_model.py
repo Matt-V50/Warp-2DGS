@@ -39,11 +39,9 @@ class GaussianModel:
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
-        
-        self.control_points = 2
 
 
-    def __init__(self, sh_degree : int):
+    def __init__(self, sh_degree : int, control_points : int=2, dof: int=2):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -59,6 +57,9 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self.control_points = control_points
+        self.dof = dof  # Degrees of freedom: Pchip(2), SmoothSigmoid(1)
+        self.dof_markers = ['x', 'y', 'z', 'a', 'b', 'c', 'd', 'e', 'f', 'g']
         self.setup_functions()
 
     def capture(self):
@@ -119,7 +120,24 @@ class GaussianModel:
     
     @property
     def get_inter_points(self):
+        # 2DGS_dev_pwl4_to_pwl3_x2_3sigma
+        # self._inter_points.data[:, :, 0] = self._inter_points.data[:, :, 2]  # for pwl4, make x0 = y0, so pwl4(x0,x1,y0,y1) = pwl3(x1,y1)
+        
+        # return torch.abs(torch.sigmoid(self._inter_points) * 2 - 1)  # for pwl_abs
         return torch.sigmoid(self._inter_points)
+        # fow pwl_clamp
+        # epsilon = 1e-5
+        # raw = torch.sigmoid(self._inter_points)
+        # x0 = raw[:, :, 0]
+        # x1 = torch.clamp(raw[:, :, 1], min=raw[:, :, 0] + epsilon)
+        # x1 = torch.clamp(x1, max=1.0 - epsilon)
+        # y0 = raw[:, :, 2]
+        # y1 = torch.clamp(raw[:, :, 3], min=raw[:, :, 2] + epsilon)
+        # y1 = torch.clamp(y1, max=1.0 - epsilon)
+        # points = torch.stack([x0, x1, y0, y1], dim=-1)
+        # return points
+        # return torch.asb(torch.sigmoid(self._inter_points) * 2 - 1)  # for pchip and smooth_sigmoid_symmetric
+        # return torch.log(self._inter_points) # for smooth_sigmoid_symmetric_k
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_xyz, self.get_scaling, scaling_modifier, self._rotation)
@@ -143,8 +161,24 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1,), dtype=torch.float, device="cuda"))
-        
-        inter_points = inverse_sigmoid(0.5 * torch.ones((fused_point_cloud.shape[0], self.control_points, 2), dtype=torch.float, device="cuda"))
+        # pchip points initialized to 0.5, smooth sigmoid points initialized to -15 (after sigmoid activation -> 0.0003)
+        ### for pwl4_segment
+        # init_vals = torch.tensor([0.5, 0.5, 1/3, 3/4], dtype=torch.float, device="cuda")
+        ### for pwl4
+        # init_vals = torch.tensor([1/2, 2/3, 1/2, 2/3], dtype=torch.float, device="cuda")
+        ### for pwl4_clamp
+        # init_vals = torch.tensor([1/3, 2/3, 1/3, 2/3], dtype=torch.float, device="cuda")
+        ### for pwl3*, pwl_abs, (pwl_abs must use sigmoid(x)^2-0.25 to map x to 0)
+        init_vals = torch.tensor([0.5], dtype=torch.float, device="cuda")
+        ### for pwl4_fixed_x
+        # init_vals = torch.tensor([0.25, 0.75], dtype=torch.float, device="cuda")
+        ### for pwl5_asymmetric_y0
+        # init_vals = torch.tensor([0.0001], dtype=torch.float, device="cuda")
+        inter_points = inverse_sigmoid(
+            init_vals.expand(fused_point_cloud.shape[0], self.control_points, self.dof)
+        )
+        # inter_points = inverse_sigmoid(0.00001 * torch.ones((fused_point_cloud.shape[0], self.control_points, self.dof), dtype=torch.float, device="cuda"))  # smooth_sigmoid_symmetric
+        # inter_points = torch.exp(torch.ones((fused_point_cloud.shape[0], self.control_points, self.dof), dtype=torch.float, device="cuda"))  # smooth_sigmoid_symmetric_k
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -165,7 +199,7 @@ class GaussianModel:
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._inter_points], 'lr': training_args.scaling_lr, "name": "inter_points"},
+            {'params': [self._inter_points], 'lr': training_args.inter_points_lr, "name": "inter_points"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
@@ -197,8 +231,9 @@ class GaussianModel:
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
         for i in range(self.control_points):
-            l.append('inter_point_x{}'.format(i))
-            l.append('inter_point_y{}'.format(i))
+            m = dict(zip(range(self.dof), self.dof_markers))
+            for j in range(self.dof):
+                l.append('inter_point_{}{}'.format(m[j], i))
         return l
 
     def save_ply(self, path):
@@ -209,7 +244,7 @@ class GaussianModel:
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
-        # _inter_points N x C x 2
+        # _inter_points N x C x DOF  -> N x (C*DOF)
         inter_points = self._inter_points.detach().flatten(start_dim=1).contiguous().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
@@ -268,20 +303,21 @@ class GaussianModel:
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         
-        if "inter_point_x0" in plydata.elements[0].data.dtype.names and "inter_point_x1" in plydata.elements[0].data.dtype.names:
-            self.control_points = 2
-            inter_points = np.zeros((xyz.shape[0], self.control_points, 2))
-            inter_points[:, 0, 0] = np.asarray(plydata.elements[0]["inter_point_x0"])
-            inter_points[:, 0, 1] = np.asarray(plydata.elements[0]["inter_point_y0"])
-            inter_points[:, 1, 0] = np.asarray(plydata.elements[0]["inter_point_x1"])
-            inter_points[:, 1, 1] = np.asarray(plydata.elements[0]["inter_point_y1"])
+        inter_point_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("inter_point")]
+        inter_point_structure = list(map(lambda x: tuple(x.split('_')[-1]), inter_point_names))
+
+        self.control_points = max([int(s[1]) for s in inter_point_structure] + [-1]) + 1
+        self.dof = len(set([s[0] for s in inter_point_structure]))
+        if self.control_points > 0:
+            inter_points = np.zeros((xyz.shape[0], self.control_points, self.dof))
+            m = dict(zip(range(self.dof), self.dof_markers))
+            for c in range(self.control_points):
+                for d in range(self.dof):
+                    attr_name = 'inter_point_{}{}'.format(m[d], c)
+                    inter_points[:, c, d] = np.asarray(plydata.elements[0][attr_name])
             self._inter_points = nn.Parameter(torch.tensor(inter_points, dtype=torch.float, device="cuda").requires_grad_(True))
-        elif "inter_point_x0" in plydata.elements[0].data.dtype.names:
-                self.control_points = 1
-                inter_points = np.zeros((xyz.shape[0], self.control_points, 2))
-                inter_points[:, 0, 0] = np.asarray(plydata.elements[0]["inter_point_x0"])
-                inter_points[:, 0, 1] = np.asarray(plydata.elements[0]["inter_point_y0"])
-                self._inter_points = nn.Parameter(torch.tensor(inter_points, dtype=torch.float, device="cuda").requires_grad_(True))
+        else:
+            self._inter_points = nn.Parameter(torch.empty((xyz.shape[0], 0, 0), dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
 

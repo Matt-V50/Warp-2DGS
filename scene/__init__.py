@@ -42,6 +42,9 @@ class Scene:
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
+        elif "S3DIS" in args.source_path and os.path.exists(os.path.join(args.source_path, "transforms.json")) :
+            print("Found s3dis file, assuming S3DIS data set!")
+            scene_info = sceneLoadTypeCallbacks["S3DIS"](args.source_path, args.white_background, args.eval, images=args.images)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)

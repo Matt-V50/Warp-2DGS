@@ -224,7 +224,12 @@ class GaussianRenderGUI:
             
             # Render options
             dpg.add_text("Render Mode:")
-            dpg.add_checkbox(label="RGB", default_value=True, callback=self._toggle_rgb)
+            dpg.add_radio_button(
+                items=["RGB", "Surf-Depth", "Dist"],
+                default_value="RGB",
+                horizontal=True,
+                callback=self._toggle_render,
+            )
             dpg.add_slider_float(label="T_limit", default_value=-1.0, min_value=0.0, max_value=1.0, tag="_TLimit")
             
             dpg.add_separator()
@@ -280,7 +285,7 @@ class GaussianRenderGUI:
 
     # === Callbacks ===
     
-    def _toggle_rgb(self, sender, value):
+    def _toggle_render(self, sender, value):
         self.render_rgb = value
 
     def _on_camera_change(self, sender, value):
@@ -374,8 +379,20 @@ class GaussianRenderGUI:
         result = None
         num_layers = 0
         
-        if self.render_rgb:
+        if self.render_rgb == "RGB":
             result = rgb.cpu().numpy()
+            num_layers += 1
+        elif self.render_rgb == "Surf-Depth":
+            depth = outputs["surf_depth"].squeeze(0).unsqueeze(-1).expand_as(rgb)
+            # notmalize depth to [0, 1] for visualization
+            depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+            result = depth.cpu().numpy()
+            num_layers += 1
+        elif self.render_rgb == "Dist":
+            dist = outputs["rend_dist"].squeeze(0).unsqueeze(-1).expand_as(rgb)
+            # normalize dist to [0, 1] for visualization
+            dist = (dist - dist.min()) / (dist.max() - dist.min() + 1e-8)
+            result = dist.cpu().numpy()
             num_layers += 1
         
         if result is None:

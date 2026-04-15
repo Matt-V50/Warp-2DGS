@@ -9,7 +9,7 @@ import pandas as pd
 
 gs_output_root = Path("/mnt/cviss/Matt/GS-Output")
 items = []
-for method in ["2DGS_dev_x0y0_pchip_symmetric_33x2_fixed_cutoff_noedge_3sigma"]:
+for method in ["2DGS_dev_empty_fastgs_abs_inter_lr_0.0025"]:
     root = gs_output_root / method
     for training_time_file in root.rglob("training_time.json"):
         rel_path = training_time_file.relative_to(root)
