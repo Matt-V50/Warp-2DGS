@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warp-2DGS: Learnable Warped Kernels for 2D Gaussian Splatting</title>
+  <meta name="description" content="Warp-2DGS augments each 2D Gaussian surfel with a learnable monotonic warp of its tangent-plane coordinates, so every primitive can learn sharp, asymmetric falloffs. NeurIPS 2026 Spotlight.">
+  <meta property="og:title" content="Warp-2DGS: Learnable Warped Kernels for 2D Gaussian Splatting">
+  <meta property="og:description" content="Learnable warped kernels that suppress Gibbs artifacts in 2D Gaussian Splatting. NeurIPS 2026 Spotlight.">
+  <meta property="og:image" content="https://matt-v50.github.io/Warp-2DGS/static/images/teaser.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="container narrow center">
+    <p class="venue"><span>NeurIPS 2026</span><span class="spot">Spotlight</span></p>
+    <h1>Warp-2DGS<span class="subtitle">Learnable Warped Kernels for 2D Gaussian Splatting</span></h1>
+    <p class="authors">Huibin Li &nbsp;&nbsp; Chul Min Yeum</p>
+    <p class="affil">CVISS Lab, University of Waterloo</p>
+    <nav class="links">
+      <a class="btn" href="https://neurips.cc/virtual/2026/loc/sydney/poster/153737">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6z M14 2v6h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Paper</a>
+      <span class="btn disabled" title="Coming soon">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>arXiv (soon)</span>
+      <a class="btn" href="https://github.com/Matt-V50/Warp-2DGS">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>Code</a>
+      <a class="btn" href="https://github.com/Matt-V50/warp-surfel-rasterization">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4-8 4z M4 12l8 4 8-4 M4 17l8 4 8-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Rasterizer</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="container">
+    <figure>
+      <img src="static/images/teaser.png" alt="2DGS and Warp-2DGS fitting a synthetic 2D scene of colored shapes" width="1945" height="666">
+      <figcaption><b>Warped kernels suppress Gibbs.</b> 2DGS (top) superimposes many Gaussians to approximate sharp
+        boundaries and rings around them. Warp-2DGS (bottom) learns step-like edges instead. Right: inverted gray
+        value along the purple scanline.</figcaption>
+    </figure>
+  </section>
+
+  <section class="container narrow">
+    <h2>Abstract</h2>
+    <p class="abstract">2D Gaussian Splatting (2DGS) builds on 3DGS with planar Gaussian primitives that improve surface
+      reconstruction and geometric fidelity. However, the smooth falloff of Gaussian kernels limits the reconstruction of
+      high-frequency shape signals, over-smoothing edges and fine geometric detail. Prior works replace the kernel
+      function, yet our systematic evaluation on signal fitting shows that all existing kernels suffer from the Gibbs
+      phenomenon, producing oscillatory artifacts near sharp discontinuities. We therefore make the kernel deformable
+      instead of replacing it. Warp-2DGS augments each Gaussian surfel with a learnable, monotonic coordinate remapping
+      in its local tangent plane. With one free control point per axis (four parameters per primitive), the remapping
+      yields asymmetric radial profiles that capture sharp edges and irregular structures symmetric kernels cannot
+      represent. It preserves the differentiable rasterization pipeline of 2DGS with moderate training overhead and is
+      optimized end-to-end through the rendering loss alone. Experiments on MipNeRF 360 and Tanks &amp; Temples show
+      that our method suppresses Gibbs artifacts at sharp boundaries and achieves the best PSNR among 2DGS-based
+      approaches, with consistent gains over 2DGS in PSNR, SSIM, and LPIPS. The advantage holds across all primitive
+      budgets, at comparable or fewer Gaussians. Gains concentrate at object boundaries, and PWL-sr retains the mesh
+      quality of 2DGS.</p>
+  </section>
+
+  <section class="container narrow" id="method">
+    <h2>Warping the kernel</h2>
+    <p>Instead of replacing the Gaussian, each surfel passes its tangent-plane coordinate <i>t</i>&nbsp;=&nbsp;<i>x</i>/<i>r</i>
+      through a monotonic piecewise-linear function <i>D</i>, anchored at (&minus;1,&nbsp;&minus;1) and (1,&nbsp;1) with
+      one learnable knot (<i>c</i><sub>1</sub>,&nbsp;<i>d</i><sub>1</sub>), and evaluates G(<i>r</i>&middot;<i>D</i>(<i>x</i>/<i>r</i>)).
+      Outside [&minus;1,&nbsp;1] the warp is the identity, so the Gaussian tail is untouched. The slope-ratio (sr)
+      parameterization learns the knot position and the ratio of the two segment slopes instead, which decouples the
+      two parameters and explores more kernel shapes. Drag the knot or the sliders:</p>
+
+    <div class="demo" id="demo">
+      <div class="demo-plots">
+        <div class="plot">
+          <canvas id="warp-canvas" width="360" height="360" aria-label="Deformation function D(t), drag the red knot"></canvas>
+          <p class="plot-label">deformation <i>D</i>(<i>t</i>)</p>
+        </div>
+        <div class="plot">
+          <canvas id="kernel-canvas" width="360" height="360" aria-label="Resulting kernel profile"></canvas>
+          <p class="plot-label">kernel G(<i>r</i>&middot;<i>D</i>(<i>x</i>/<i>r</i>)), <i>r</i> = 3</p>
+        </div>
+      </div>
+      <div class="demo-controls">
+        <div class="seg" role="radiogroup" aria-label="Parameterization">
+          <button type="button" class="active" data-mode="pwl" role="radio" aria-checked="true">PWL</button>
+          <button type="button" data-mode="sr" role="radio" aria-checked="false">PWL-sr</button>
+        </div>
+        <label><span>knot <i>c</i><sub>1</sub></span><input type="range" id="c1" min="-0.95" max="0.95" step="0.01" value="0.35"><output id="c1-out"></output></label>
+        <label id="d1-row"><span>knot <i>d</i><sub>1</sub></span><input type="range" id="d1" min="-0.95" max="0.95" step="0.01" value="-0.35"><output id="d1-out"></output></label>
+        <label id="q-row" hidden><span>log slope ratio <i>q</i></span><input type="range" id="q" min="-3" max="3" step="0.01" value="1.2"><output id="q-out"></output></label>
+        <button type="button" class="reset" id="reset">Reset to identity</button>
+      </div>
+    </div>
+
+    <figure>
+      <img src="static/images/cutoff.png" alt="Expanded bounding box for deformed kernels" width="2000" height="659" loading="lazy">
+      <figcaption><b>Footprint.</b> A warped kernel can reach beyond the 3&sigma; box of 2DGS (red), so the
+        rasterizer enlarges the cutoff to <i>r</i>&radic;2 (blue) to cover the valid area (green); densification still uses
+        the unwarped 3&sigma; radius.</figcaption>
+    </figure>
+  </section>
+
+  <section class="container" id="results">
+    <h2 class="narrow-heading">Novel view synthesis</h2>
+    <p class="narrow-text">Mip-NeRF 360 (&times;4) test views. Drag the divider to compare 2DGS with Warp-2DGS (PWL-sr).</p>
+
+    <div class="compare-wrap">
+      <div class="compare" id="compare">
+        <img id="cmp-right" alt="Warp-2DGS rendering" draggable="false">
+        <div class="compare-left" id="cmp-left-clip"><img id="cmp-left" alt="2DGS rendering" draggable="false"></div>
+        <div class="compare-handle" id="cmp-handle" aria-hidden="true"><span></span></div>
+        <span class="tag tag-left" id="tag-left">2DGS</span>
+        <span class="tag tag-right">Warp-2DGS</span>
+        <input type="range" id="cmp-range" min="0" max="100" step="0.1" value="50" aria-label="Comparison divider position">
+      </div>
+      <div class="compare-bar">
+        <div class="thumbs" id="thumbs" role="tablist" aria-label="Scenes"></div>
+        <label class="gt-toggle"><input type="checkbox" id="gt-toggle"> show ground truth on the left</label>
+      </div>
+    </div>
+
+    <div class="table-wrap narrow-table">
+      <table>
+        <thead>
+          <tr><th rowspan="2">Method</th><th colspan="2">Mip-NeRF 360 &times;4</th><th colspan="2">Mip-NeRF 360 &times;8</th><th rowspan="2">TNT &times;1</th></tr>
+          <tr><th>Outdoor</th><th>Indoor</th><th>Outdoor</th><th>Indoor</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>2DGS</td><td>25.85 / 0.778 / 0.259</td><td>30.51 / 0.929 / 0.169</td><td>27.03 / 0.835 / 0.166</td><td>31.19 / 0.945 / 0.093</td><td>23.66 / 0.832 / 0.280</td></tr>
+          <tr><td>Ours (PWL)</td><td>25.93 / <b>0.784</b> / <b>0.243</b></td><td>30.85 / <b>0.933</b> / <b>0.160</b></td><td>27.08 / 0.838 / <b>0.157</b></td><td>31.36 / 0.947 / <b>0.088</b></td><td>23.86 / 0.835 / <b>0.272</b></td></tr>
+          <tr><td>Ours (Pchip)</td><td>25.89 / 0.782 / 0.246</td><td>30.87 / <b>0.933</b> / 0.161</td><td>27.06 / 0.837 / 0.159</td><td>31.30 / 0.947 / 0.089</td><td>23.91 / 0.835 / 0.274</td></tr>
+          <tr class="hl"><td>Ours (PWL-sr)</td><td><b>25.94</b> / <b>0.784</b> / 0.245</td><td><b>30.89</b> / <b>0.933</b> / <b>0.160</b></td><td><b>27.11</b> / <b>0.839</b> / <b>0.157</b></td><td><b>31.43</b> / <b>0.948</b> / <b>0.088</b></td><td><b>23.92</b> / <b>0.836</b> / 0.273</td></tr>
+          <tr><td>Ours (Pchip-sr)</td><td>25.87 / 0.782 / 0.248</td><td>30.88 / 0.932 / 0.161</td><td>27.07 / 0.838 / 0.159</td><td>31.33 / 0.946 / 0.089</td><td>23.91 / 0.835 / 0.275</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">PSNR&uarr; / SSIM&uarr; / LPIPS&darr;, Outdoor and Indoor averaged over their scenes. <b>Best</b> in each column.</p>
+  </section>
+
+  <section class="container narrow" id="variants">
+    <h2>Beyond one knot</h2>
+    <p>None of the multi-knot variants we tried offered a clear advantage over the single knot: adjacent free knots
+      tend to drift together and, once merged, fail to separate again. The code includes the single-knot kernels of
+      the paper and the multi-knot variants below.</p>
+    <figure>
+      <img src="static/images/multiknot_variants.png" alt="Ten deformation variants with their kernels" width="1412" height="1097" loading="lazy">
+      <figcaption>For each variant, the upper plot shows the deformation <i>D</i>(<i>t</i>) and the lower plot the resulting kernel.</figcaption>
+    </figure>
+  </section>
+
+  <section class="container narrow" id="bibtex">
+    <div class="bib-head"><h2>BibTeX</h2><button type="button" class="copy" id="copy-bib">Copy</button></div>
+<pre><code id="bib">@inproceedings{li2026warp2dgs,
+  title     = {Warp-2DGS: Learnable Warped Kernels for 2D Gaussian Splatting},
+  author    = {Li, Huibin and Yeum, Chul Min},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2026}
+}</code></pre>
+  </section>
+</main>
+
+<footer class="container narrow center">
+  <p>Built on <a href="https://github.com/hbb1/2d-gaussian-splatting">2DGS</a> and
+    <a href="https://github.com/graphdeco-inria/gaussian-splatting">3DGS</a>.</p>
+</footer>
+
+<script src="static/main.js"></script>
+</body>
+</html>
