@@ -1,197 +1,197 @@
-# 2D Gaussian Splatting for Geometrically Accurate Radiance Fields
+# Warp-2DGS: Learnable Warped Kernels for 2D Gaussian Splatting
 
-[Project page](https://surfsplatting.github.io/) | [Paper](https://arxiv.org/pdf/2403.17888) | [Video](https://www.youtube.com/watch?v=oaHCtB6yiKU) | [Surfel Rasterizer (CUDA)](https://github.com/hbb1/diff-surfel-rasterization) | [Surfel Rasterizer (Python)](https://colab.research.google.com/drive/1qoclD7HJ3-o0O1R8cvV3PxLhoDCMsH8W?usp=sharing) | [DTU+COLMAP (3.5GB)](https://drive.google.com/drive/folders/1SJFgt8qhQomHX55Q4xSvYE2C6-8tFll9) | [SIBR Viewer Pre-built for Windows](https://drive.google.com/file/d/1DRFrtFUfz27QvQKOWbYXbRS2o2eSgaUT/view?usp=sharing) | [Web Viewer](https://github.com/mkkellogg/GaussianSplats3D) <br>
+Huibin Li, Chul Min Yeum<br>
+CVISS Lab, University of Waterloo<br>
+**NeurIPS 2026 (Spotlight)**
 
-![Teaser image](assets/teaser.jpg)
+<!-- TODO: add [Paper](arXiv link) once it is online -->
+[NeurIPS page](https://neurips.cc/virtual/2026/loc/sydney/poster/153737) | [Rasterizer](https://github.com/Matt-V50/warp-surfel-rasterization)
 
-This repo contains the official implementation for the paper "2D Gaussian Splatting for Geometrically Accurate Radiance Fields". Our work represents a scene with a set of 2D oriented disks (surface elements) and rasterizes the surfels with [perspective correct differentiable raseterization](https://colab.research.google.com/drive/1qoclD7HJ3-o0O1R8cvV3PxLhoDCMsH8W?usp=sharing). Our work also develops regularizations that enhance the reconstruction quality. We also devise meshing approaches for Gaussian splatting.
+<p align="center">
+  <img src="assets/teaser.png" width="100%" alt="2DGS vs Warp-2DGS on a synthetic 2D scene">
+</p>
 
+2DGS (top) superimposes many Gaussians to approximate sharp boundaries and rings around them
+(Gibbs). The warped kernels of Warp-2DGS (bottom) adopt a step-like edge instead; the plot on the
+right shows the inverted gray value along the purple scanline.
 
-## ⭐ New Features 
-- 2024/07/20: Web-based viewer [GaussianSplats3D](https://github.com/mkkellogg/GaussianSplats3D) also supports 2DGS. Thanks to [Mark Kellogg](https://github.com/mkkellogg)
-- 2024/07/19: [Colab Notebook](https://github.com/atakan-topaloglu/2d_gaussian_splatting_colab) is supported! Thanks to [atakan-topaloglu](https://github.com/atakan-topaloglu)
-- 2024/06/10: [SIBR Viewer](https://github.com/RongLiu-Leo/2d-gaussian-splatting) is supported!
-- 2024/06/05: [Remote Viewer](https://github.com/hwanhuh/2D-GS-Viser-Viewer) based on Viser is supported! Thanks to [HwanHeo](https://github.com/hwanhuh).
-- 2024/05/30:  Fixed a bug related to unbounded meshing. The foreground mesh quality should now be consistent with the bounded mesh.
-- 2024/05/17: Improve training speed by 30%~40% through the [cuda operator fusing](https://github.com/hbb1/diff-surfel-rasterization/pull/7). Please update the diff-surfel-rasterization submodule if you have already installed it. 
-    ```bash
-    git submodule update --remote  
-    pip install submodules/diff-surfel-rasterization
-    ```
-- 2024/05/05: Important updates - Now our algorithm supports **unbounded mesh extraction**!
-Our key idea is to contract the space into a sphere and then perform **adaptive TSDF truncation**. 
-
-![visualization](assets/unbounded.gif)
-
-## SIBR Viewer
-
-
-https://github.com/RongLiu-Leo/2d-gaussian-splatting/assets/102014841/b75dd9a7-e3ee-4666-99ff-8c9121ff66dc
-
-
-The Pre-built Viewer for Windows can be found [here](https://drive.google.com/file/d/1DRFrtFUfz27QvQKOWbYXbRS2o2eSgaUT/view?usp=sharing). If you use Ubuntu or want to check the viewer usage, please refer to [GS Monitor](https://github.com/RongLiu-Leo/Gaussian-Splatting-Monitor).
-### How to use
-Firstly open the viewer, 
-```shell
-<path to downloaded/compiled viewer>/bin/SIBR_remoteGaussian_app_rwdi
-```
-and then
-```shell
-# Monitor the training process
-python train.py -s <path to COLMAP or NeRF Synthetic dataset> 
-# View the trained model
-python view.py -s <path to COLMAP or NeRF Synthetic dataset> -m <path to trained model> 
-```
+The smooth falloff of Gaussian kernels over-smooths sharp edges, and every alternative kernel we
+tested still produces Gibbs ringing at discontinuities. Instead of replacing the kernel,
+Warp-2DGS makes it deformable: each 2DGS surfel passes its tangent-plane coordinates through a
+learnable monotonic piecewise warp before the Gaussian is evaluated. With one free control point
+per axis (four parameters per primitive), every surfel can learn an asymmetric, step-like
+falloff, trained end to end with the rendering loss alone.
 
 ## Installation
 
 ```bash
-# download
-git clone https://github.com/hbb1/2d-gaussian-splatting.git --recursive
+git clone --recursive https://github.com/Matt-V50/Warp-2DGS.git
+cd Warp-2DGS
 
-# if you have an environment used for 3dgs, use it
-# if not, create a new environment
-conda env create --file environment.yml
-conda activate surfel_splatting
+conda env create -f environment.yml
+conda activate warp2dgs
+
+# CUDA extensions (needs a CUDA toolkit matching PyTorch, tested with CUDA 12.1)
+pip install --no-build-isolation submodules/warp-surfel-rasterization submodules/simple-knn
 ```
-## Training
-To train a scene, simply use
+
+The rasterizer compiles every warp kernel into its own extension, which takes about 9 minutes.
+To build only some of them:
+
 ```bash
-python train.py -s <path to COLMAP or NeRF Synthetic dataset>
+WARP_KERNELS=pwl_sr,pchip_sr pip install --no-build-isolation submodules/warp-surfel-rasterization
 ```
-Commandline arguments for regularizations
+
+Tested on Ubuntu with an RTX 4090, Python 3.10, PyTorch 2.4.1 and CUDA 12.1.
+
+## Training and evaluation
+
+Data are COLMAP scenes as in [3DGS](https://github.com/graphdeco-inria/gaussian-splatting).
+
 ```bash
---lambda_normal  # hyperparameter for normal consistency
---lambda_distortion # hyperparameter for depth distortion
---depth_ratio # 0 for mean depth and 1 for median depth, 0 works for most cases
-```
-**Tips for adjusting the parameters on your own dataset:**
-- For unbounded/large scenes, we suggest using mean depth, i.e., ``depth_ratio=0``,  for less "disk-aliasing" artifacts.
+# train with the default PWL-sr kernel
+python train.py -s <scene> -m <model> -i images_4 --eval
 
-## Testing
-### Bounded Mesh Extraction
-To export a mesh within a bounded volume, simply use
+# render test views and extract a mesh
+python render.py -m <model>
+
+# PSNR / SSIM / LPIPS on train and test views, written to <model>/results_iter<N>.json
+python evaluate_metrics.py -m <model> --iterations 7000 30000
+```
+
+The warp options are saved in `<model>/cfg_args`, so `render.py` and `evaluate_metrics.py` pick
+up the kernel a model was trained with.
+
+| Option | Default | |
+|---|---|---|
+| `--kernel` | `pwl_sr` | warp kernel, see below |
+| `--rescale` | `3.0` | warped domain [-r, r] in units of the Gaussian scale |
+| `--cutoff` | `-1` | footprint cutoff, `<= 0` means `rescale * sqrt(2)` |
+| `--inter_points_lr` | `0.0025` | learning rate of the control points |
+| `--image_fitting` | off | fit a single 2D image with flat, camera-facing, opaque splats |
+
+A warped kernel can reach beyond the 3-sigma box that 2DGS uses to bound each splat on screen, so
+the footprint cutoff is enlarged to `rescale * sqrt(2)` for rasterization. Densification still
+uses the unwarped 3-sigma radius.
+
+<p align="center">
+  <img src="assets/cutoff.png" width="100%" alt="AABB expansion for warped kernels">
+</p>
+
+## Kernels
+
+| `--kernel` | Paper | |
+|---|---|---|
+| `pwl` | PWL | one interior knot (c1, d1) per axis |
+| `pwl_sr` | PWL-sr | PWL with the slope-ratio parameterization |
+| `pchip` | Pchip | piecewise cubic Hermite interpolation of the same knot |
+| `pchip_sr` | Pchip-sr | Pchip with the slope-ratio parameterization |
+| `identity` | 2DGS | D(t) = t, no warp |
+| `pwl2_mult`, `pwl2_segment` | Appendix D | two interior knots |
+| `pwl3_symmetric`, `pwl3_asymmetric`, `pwl3_asymmetric_y0` | Appendix D | knot fixed at the origin plus one on each side |
+| `pwl_fixed_d`, `pchip_fixed_d` | – | d1 = 0, only c1 is learned |
+| `pchip_antidiag` | – | Pchip with d1 = -c1 |
+| `pwl_plateau` | – | symmetric flat top: plateau + linear ramp |
+| `pchip3_symmetric` | – | Pchip counterpart of PWL3-symmetric |
+
+Kernels marked – are additional variants not reported in the paper.
+
+<p align="center">
+  <img src="assets/multiknot_variants.png" width="100%" alt="Multi-knot deformation variants">
+</p>
+
+Multi-knot deformation variants (Figure 9 of the paper). For each variant, the upper plot shows
+the deformation function D(t) and the lower plot the resulting kernel G(r · D(x/r)). PWL2-clamp, PWL2-accumulate,
+PWL2-fixed-x and PWL2-quadrant are not built by default; their sources are kept in
+`submodules/warp-surfel-rasterization/cuda_rasterizer/experimental/`.
+
+## Reproducing the paper
+
+`scripts/run_experiments.py` runs every kernel x scene x resolution and skips stages whose
+outputs already exist; `--dry_run` prints the commands. It expects this layout under `--data_root`:
+
+```
+Mip-NeRF360/360_v2/<scene>/images_{4,8}     # Mip-NeRF 360
+tanks_and_temples/<scene>/images            # Tanks and Temples, novel view synthesis
+TNT_GOF/TrainingSet/<scene>                 # Tanks and Temples, preprocessed for meshing
+TanksAndTemples/trainingdata/<scene>        # official TNT ground truth (point clouds, alignments, crop files)
+BlenderImage/<scene>/dataset                # single-image fitting (Figure 1)
+```
+
+- [Mip-NeRF 360](https://jonbarron.info/mipnerf360/)
+- [Tanks and Temples](https://www.tanksandtemples.org/download/), including the ground truth for
+  the F1 evaluation
+- Preprocessed Tanks and Temples for meshing: [TnT_data](https://huggingface.co/datasets/ZehaoYu/gaussian-opacity-fields/tree/main)
+  from Gaussian Opacity Fields
+
 ```bash
-python render.py -m <path to pre-trained model> -s <path to COLMAP dataset> 
+KERNELS="identity pwl pwl_sr pchip pchip_sr"
+
+# Table 1 / 4: Mip-NeRF 360 (x4, x8) and Tanks and Temples novel view synthesis
+python scripts/run_experiments.py --dataset mip360 --data_root <data> --output_root <out> --kernels $KERNELS
+python scripts/run_experiments.py --dataset tnt    --data_root <data> --output_root <out> --kernels $KERNELS
+python scripts/collect_results.py --dataset mip360 --output_root <out>
+python scripts/collect_results.py --dataset tnt    --output_root <out>
+
+# Table 2: Tanks and Temples F1 (train, TSDF mesh, official evaluation)
+python scripts/run_experiments.py --dataset tnt_mesh --data_root <data> --output_root <out> --kernels $KERNELS
+python scripts/collect_results.py --dataset tnt_mesh --output_root <out>
+
+# Table 3 / 5: boundary PSNR / SSIM on the Tanks and Temples renders
+python scripts/eval_boundary.py --output_root <out> [--ssim]
+
+# Table 6: rescale factor sensitivity
+python scripts/run_experiments.py --dataset mip360 --factors 8 --kernels pwl pwl_sr --rescales 2 3 4 \
+    --data_root <data> --output_root <out>
+
+# Figure 4: distribution of the learned control points
+python scripts/plot_control_points.py --output_root <out> --experiments pwl pwl_sr pchip pchip_sr
+
+# Figure 1: fit a single image, then plot a scanline of the renders against ground truth
+python scripts/run_experiments.py --dataset blender_image --data_root <data> --output_root <out> \
+    --kernels identity pwl_sr --save_images
+python scripts/plot_line_profile.py <2dgs render> <warp2dgs render> <gt image> [--points X0 Y0 X1 Y1]
 ```
-Commandline arguments you should adjust accordingly for meshing for bounded TSDF fusion, use
+
+The official TNT evaluation needs `open3d==0.10.0`, so `tnt_mesh` runs it through a separate
+conda environment (`--metrics_env`, default `2d-gs-eval`):
+
 ```bash
---depth_ratio # 0 for mean depth and 1 for median depth
---voxel_size # voxel size
---depth_trunc # depth truncation
+conda create -n 2d-gs-eval python=3.8
+conda run -n 2d-gs-eval pip install -r scripts/eval_tnt/requirements.txt   # open3d==0.10
 ```
-If these arguments are not specified, the script will automatically estimate them using the camera information.
-### Unbounded Mesh Extraction
-To export a mesh with an arbitrary size, we devised an unbounded TSDF fusion with space contraction and adaptive truncation.
-```bash
-python render.py -m <path to pre-trained model> -s <path to COLMAP dataset> --mesh_res 1024
-```
-
-## Quick Examples
-Assuming you have downloaded [MipNeRF360](https://jonbarron.info/mipnerf360/), simply use
-```bash
-python train.py -s <path to m360>/<garden> -m output/m360/garden
-# use our unbounded mesh extraction!!
-python render.py -s <path to m360>/<garden> -m output/m360/garden --unbounded --skip_test --skip_train --mesh_res 1024
-# or use the bounded mesh extraction if you focus on foreground
-python render.py -s <path to m360>/<garden> -m output/m360/garden --skip_test --skip_train --mesh_res 1024
-```
-If you have downloaded the [DTU dataset](https://drive.google.com/drive/folders/1SJFgt8qhQomHX55Q4xSvYE2C6-8tFll9), you can use
-```bash
-python train.py -s <path to dtu>/<scan105> -m output/date/scan105 -r 2 --depth_ratio 1
-python render.py -r 2 --depth_ratio 1 --skip_test --skip_train
-```
-**Custom Dataset**: We use the same COLMAP loader as 3DGS, you can prepare your data following [here](https://github.com/graphdeco-inria/gaussian-splatting?tab=readme-ov-file#processing-your-own-scenes). 
-
-## Full evaluation
-We provide scripts to evaluate our method of novel view synthesis and geometric reconstruction.
-<details>
-<summary><span style="font-weight: bold;">Explanation of Performance Differences to the Paper</span></summary>
-
-We have re-implemented the repository for improved efficiency, which has slightly impacted performance compared to the original paper. Two factors have influenced this change:
-
-- 📈 We fixed some minor bugs, such as a half-pixel shift in TSDF fusion, resulting in improved geometry reconstruction.
-
-- 📉 We removed the gradient of the low-pass filter used for densification, which reduces the number of Gaussians. As a result, the PSNR has slightly dropped, but we believe this trade-off is worthwhile for real-world applications.
-
-You can report either the numbers from the paper or from this implementation, as long as they are discussed in a comparable setting.
-</details>
-
-#### Novel View Synthesis
-For novel view synthesis on [MipNeRF360](https://jonbarron.info/mipnerf360/) (which also works for other colmap datasets), use
-```bash
-python scripts/mipnerf_eval.py -m60 <path to the MipNeRF360 dataset>
-```
-We provide <a> Evaluation Results (Pretrained, Images)</a>. 
-<details>
-<summary><span style="font-weight: bold;">Table Results</span></summary>
-
-</details>
-
-#### Geometry reconstruction
-For geometry reconstruction on DTU dataset, please download the preprocessed data from [Drive](https://drive.google.com/drive/folders/1SJFgt8qhQomHX55Q4xSvYE2C6-8tFll9) or [Hugging Face](https://huggingface.co/datasets/dylanebert/2DGS). You also need to download the ground truth [DTU point cloud](https://roboimagedata.compute.dtu.dk/?page_id=36). 
-```bash
-python scripts/dtu_eval.py --dtu <path to the preprocessed DTU dataset>   \
-     --DTU_Official <path to the official DTU dataset>
-```
-We provide <a> Evaluation Results (Pretrained, Meshes)</a>. 
-<details>
-<summary><span style="font-weight: bold;">Table Results</span></summary>
-
-Chamfer distance on DTU dataset (lower is better)
-
-|   | 24   | 37   | 40   | 55   | 63   | 65   | 69   | 83   | 97   | 105  | 106  | 110  | 114  | 118  | 122  | Mean |
-|----------|------|------|------|------|------|------|------|------|------|------|------|------|------|------|------|------|
-| Paper    | 0.48 | 0.91 | 0.39 | 0.39 | 1.01 | 0.83 | 0.81 | 1.36 | 1.27 | 0.76 | 0.70 | 1.40 | 0.40 | 0.76 | 0.52 | 0.80 |
-| Reproduce | 0.46 | 0.80 | 0.33 | 0.37 | 0.95 | 0.86 | 0.80 | 1.25 | 1.24 | 0.67 | 0.67 | 1.24 | 0.39 | 0.64 | 0.47 | 0.74 |
-</details>
-<br>
-
-For geometry reconstruction on TnT dataset, please download the preprocessed [TnT_data](https://huggingface.co/datasets/ZehaoYu/gaussian-opacity-fields/tree/main). You also need to download the ground truth [TnT_GT](https://www.tanksandtemples.org/download/), including ground truth point cloud, alignments and cropfiles.
-
-**Due to historical issue, you should use open3d==0.10.0 for evaluating TNT.**
-```bash
-# use open3d 0.18.0, skip metrics
-python scripts/tnt_eval.py --TNT_data <path to the preprocessed TNT dataset>   \
-     --TNT_GT <path to the official TNT evaluation dataset> --skip_metrics
-
-# use open3d 0.10.0, skip traing and rendering
-python scripts/tnt_eval.py --TNT_data <path to the preprocessed TNT dataset>   \
-     --TNT_GT <path to the official TNT evaluation dataset> --skip_training --skip_rendering
-```
-We provide <a> Evaluation Results (Pretrained, Meshes)</a>. 
-<details>
-<summary><span style="font-weight: bold;">Table Results</span></summary>
-
-F1 scores on TnT dataset (higher is better)
-
-|    | Barn   | Caterpillar | Ignatius | Truck  | Meetingroom | Courthouse | Mean | 
-|--------|--------|-------------|----------|--------|-------------|------------|------------|
-| Reproduce | 0.41  | 0.23      | 0.51   | 0.45 | 0.17      | 0.15      | 0.32 |
-</details>
-<br>
-
-
-## FAQ
-- **Training does not converge.**  If your camera's principal point does not lie at the image center, you may experience convergence issues. Our code only supports the ideal pinhole camera format, so you may need to make some modifications. Please follow the instructions provided [here](https://github.com/graphdeco-inria/gaussian-splatting/issues/144#issuecomment-1938504456) to make the necessary changes. We have also modified the rasterizer in the latest [commit](https://github.com/hbb1/diff-surfel-rasterization/pull/6) to support data accepted by 3DGS. To avoid further issues, please update to the latest commit.
-
-- **No mesh / Broken mesh.** When using the *Bounded mesh extraction* mode, it is necessary to adjust the `depth_trunc` parameter to perform TSDF fusion to extract meshes. On the other hand, *Unbounded mesh extraction* does not require tuning the parameters but is less efficient.  
-
-- **Can 3DGS's viewer be used to visualize 2DGS?** Technically, you can export 2DGS to 3DGS's ply file by appending an additional zero scale. However, due to the inaccurate affine projection of 3DGS's viewer, you may see some distorted artefacts. We are currently working on a viewer for 2DGS, so stay tuned for updates.
-
-## Acknowledgements
-This project is built upon [3DGS](https://github.com/graphdeco-inria/gaussian-splatting). The TSDF fusion for extracting mesh is based on [Open3D](https://github.com/isl-org/Open3D). The rendering script for MipNeRF360 is adopted from [Multinerf](https://github.com/google-research/multinerf/), while the evaluation scripts for DTU and Tanks and Temples dataset are taken from [DTUeval-python](https://github.com/jzhangbs/DTUeval-python) and [TanksAndTemples](https://github.com/isl-org/TanksAndTemples/tree/master/python_toolbox/evaluation), respectively. The fusing operation for accelerating the renderer is inspired by [Han's repodcue](https://github.com/Han230104/2D-Gaussian-Splatting-Reproduce). We thank all the authors for their great repos. 
-
 
 ## Citation
-If you find our code or paper helps, please consider citing:
+
 ```bibtex
-@inproceedings{Huang2DGS2024,
-    title={2D Gaussian Splatting for Geometrically Accurate Radiance Fields},
-    author={Huang, Binbin and Yu, Zehao and Chen, Anpei and Geiger, Andreas and Gao, Shenghua},
-    publisher = {Association for Computing Machinery},
-    booktitle = {SIGGRAPH 2024 Conference Papers},
-    year      = {2024},
-    doi       = {10.1145/3641519.3657428}
+@inproceedings{li2026warp2dgs,
+  title     = {Warp-2DGS: Learnable Warped Kernels for 2D Gaussian Splatting},
+  author    = {Li, Huibin and Yeum, Chul Min},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2026}
 }
 ```
+
+## Acknowledgements
+
+This code is built on [2DGS](https://github.com/hbb1/2d-gaussian-splatting) and
+[3DGS](https://github.com/graphdeco-inria/gaussian-splatting). The Tanks and Temples evaluation
+comes from the [official toolbox](https://github.com/isl-org/TanksAndTemples/tree/master/python_toolbox/evaluation)
+and the preprocessed meshing data from [Gaussian Opacity Fields](https://github.com/autonomousvision/gaussian-opacity-fields).
+Please also cite 2DGS if you use this code:
+
+```bibtex
+@inproceedings{Huang2DGS2024,
+  title     = {2D Gaussian Splatting for Geometrically Accurate Radiance Fields},
+  author    = {Huang, Binbin and Yu, Zehao and Chen, Anpei and Geiger, Andreas and Gao, Shenghua},
+  publisher = {Association for Computing Machinery},
+  booktitle = {SIGGRAPH 2024 Conference Papers},
+  year      = {2024},
+  doi       = {10.1145/3641519.3657428}
+}
+```
+
+## License
+
+Released under the non-commercial [Gaussian-Splatting license](LICENSE.md) of Inria and MPII,
+inherited from 3DGS and 2DGS.

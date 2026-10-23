@@ -55,6 +55,10 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
+        self.kernel = "pwl_sr"       # warp kernel, see submodules/warp-surfel-rasterization/warp_surfel_rasterization/kernels.py
+        self.rescale = 3.0           # warp domain [-rescale, rescale] in splat space
+        self.cutoff = -1.0           # footprint cutoff in sigmas, <= 0 means rescale * sqrt(2)
+        self.image_fitting = False   # fit a single 2D image: camera-facing, flat, opaque splats
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -81,7 +85,7 @@ class OptimizationParams(ParamGroup):
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
-        self.inter_points_lr = 0.005
+        self.inter_points_lr = 0.0025
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2

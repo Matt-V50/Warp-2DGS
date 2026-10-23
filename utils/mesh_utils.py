@@ -25,7 +25,9 @@ def post_process_mesh(mesh, cluster_to_keep=1000):
     """
     import copy
     print("post processing the mesh to have {} clusterscluster_to_kep".format(cluster_to_keep))
-    mesh_0 = copy.deepcopy(mesh)
+    mesh_size = len(mesh.vertices)
+    print("num vertices raw {}".format(mesh_size))
+    mesh_0 = mesh
     with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
             triangle_clusters, cluster_n_triangles, cluster_area = (mesh_0.cluster_connected_triangles())
 
@@ -38,8 +40,8 @@ def post_process_mesh(mesh, cluster_to_keep=1000):
     mesh_0.remove_triangles_by_mask(triangles_to_remove)
     mesh_0.remove_unreferenced_vertices()
     mesh_0.remove_degenerate_triangles()
-    print("num vertices raw {}".format(len(mesh.vertices)))
-    print("num vertices post {}".format(len(mesh_0.vertices)))
+    mesh_0_size = len(mesh_0.vertices)
+    print("num vertices post {}".format(mesh_0_size))
     return mesh_0
 
 def to_cam_open3d(viewpoint_stack):

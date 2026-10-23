@@ -9,6 +9,8 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import uuid
+
 import torch
 from scene import Scene
 import os
@@ -17,13 +19,41 @@ from os import makedirs
 from gaussian_renderer import render
 import torchvision
 from utils.general_utils import safe_state
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 from utils.mesh_utils import GaussianExtractor, to_cam_open3d, post_process_mesh
 from utils.render_utils import generate_path, create_videos
-
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TENSORBOARD_FOUND = True
+except ImportError:
+    TENSORBOARD_FOUND = False
+    
 import open3d as o3d
+
+def prepare_output_and_logger(args):
+    if not args.model_path:
+        if os.getenv('OAR_JOB_ID'):
+            unique_str=os.getenv('OAR_JOB_ID')
+        else:
+            unique_str = str(uuid.uuid4())
+        args.model_path = os.path.join("./output/", unique_str[0:10])
+        
+    # Set up output folder
+    print("Output folder: {}".format(args.model_path))
+    os.makedirs(args.model_path, exist_ok = True)
+    with open(os.path.join(args.model_path, "cfg_args_render"), 'w') as cfg_log_f:
+        cfg_log_f.write(str(Namespace(**vars(args))))
+
+    # Create Tensorboard writer
+    tb_writer = None
+    if TENSORBOARD_FOUND:
+        tb_writer = SummaryWriter(args.model_path)
+    else:
+        print("Tensorboard not available: not logging progress")
+    return tb_writer
+
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -44,10 +74,11 @@ if __name__ == "__main__":
     parser.add_argument("--mesh_res", default=1024, type=int, help='Mesh: resolution for unbounded mesh extraction')
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
+    prepare_output_and_logger(args)
 
 
     dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel.from_model_params(dataset)
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
     bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

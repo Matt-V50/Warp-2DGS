@@ -1,15 +1,21 @@
+# python
+__pycache__/
 *.pyc
-.vscode
-output
-build
-data
-*.ply
+*.egg-info/
 **/PKG-INFO
-# submodules
-**__pycache__**
-*.png
-*.out
-eval
+build/
+dist/
+*.so
+
+# editors
+.vscode/
+.idea/
+
+# datasets and experiment outputs
+data/
+output/
+wandb/
+**/tmp/
+*.ply
 *.npz
-**/tmp
-wandb
+*.out

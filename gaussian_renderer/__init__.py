@@ -11,8 +11,7 @@
 
 import torch
 import math
-# from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-from diff_surfel_rasterization_dev import GaussianRasterizationSettings, GaussianRasterizer
+from warp_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
@@ -48,8 +47,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
-        T_limit=pipe.T_limit
-        # pipe.debug
+        T_limit=pipe.T_limit,
+        kernel=pc.kernel,
+        rescale=pc.rescale,
+        cutoff=pc.cutoff,
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -97,7 +98,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
     
-    rendered_image, radii, allmap = rasterizer(
+    rendered_image, radii, original_radii, allmap = rasterizer(
         inter_points = inter_points,
         means3D = means3D,
         means2D = means2D,
@@ -115,6 +116,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "viewspace_points": means2D,
             "visibility_filter" : radii > 0,
             "radii": radii,
+            "original_radii": original_radii,
+            "original_visibility_filter" : original_radii > 0,
     }
 
 

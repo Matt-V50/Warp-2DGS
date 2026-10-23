@@ -59,10 +59,11 @@ def evaluate_set(name, views: List[Camera], gaussians, pipeline, background, sav
     
     for idx, view in enumerate(tqdm(views, desc=f"Evaluating {name}")):
         # Render the image
-        rendering = render(view, gaussians, pipeline, background)["render"]
+        render_package = render(view, gaussians, pipeline, background)
+        rendering = render_package["render"]  # RGB
         gt = view.original_image[0:3, :, :].cuda()
         
-        # Add batch dimension for metric computation
+        # Add batch dimension for metric computation1
         rendering = rendering.unsqueeze(0)
         gt = gt.unsqueeze(0)
         
@@ -81,7 +82,10 @@ def evaluate_set(name, views: List[Camera], gaussians, pipeline, background, sav
         lpipss.append(lpips_val)
         
         # Store per-view metrics
-        view_name = '{0:05d}.png'.format(idx)
+        # view_name = '{0:05d}.png'.format(idx)
+        view_name = view.image_name if hasattr(view, 'image_name') else '{0:05d}'.format(idx)
+        if not view_name.endswith('.png'):
+            view_name = f'{view_name}.png'
         per_view_metrics["SSIM"][view_name] = ssim_val.item() if torch.is_tensor(ssim_val) else ssim_val
         per_view_metrics["PSNR"][view_name] = psnr_val.item() if torch.is_tensor(psnr_val) else psnr_val
         per_view_metrics["LPIPS"][view_name] = lpips_val.item() if torch.is_tensor(lpips_val) else lpips_val
@@ -99,9 +103,55 @@ def evaluate_set(name, views: List[Camera], gaussians, pipeline, background, sav
     
     return mean_metrics, per_view_metrics
 
-
+def render_set(name, views: List[Camera], gaussians, pipeline, background, save_path:Optional[Path], factor=4, T_limit=None,
+               save_depth=False):
+    if T_limit is not None:
+        pipeline.T_limit = T_limit
+    
+    if factor != 1:
+        save_path = save_path.with_name(f"{save_path.name}_x{factor}")
+    if T_limit is not None:
+        save_path = save_path.with_name(f"{save_path.name}_T{T_limit:.1f}")
+    
+    depth_save_path = save_path.with_name(save_path.name + "_depth")
+    for idx, view in enumerate(tqdm(views, desc=f"Evaluating {name}")):
+        # Render the image
+        image_path = save_path / f'{view.image_name}.png'
+        if image_path.exists() and save_depth and depth_save_path.exists():
+            continue
+        old_image_height = view.image_height
+        old_image_width = view.image_width
+        # old_image_name = view.image_name
+        view.image_height *= factor
+        view.image_width *= factor
+        view.image_name += f"_x{factor}"
+        render_package = render(view, gaussians, pipeline, background)
+        rendering = render_package["render"]  # RGB
+        depth = render_package["depth"]  # Depth
+        gt = view.original_image[0:3, :, :].cuda()
+        
+        # Add batch dimension for metric computation
+        rendering = rendering.unsqueeze(0)
+        depth = depth.unsqueeze(0)
+        depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+        gt = gt.unsqueeze(0)
+        
+        if save_path:
+            save_path.mkdir(parents=True, exist_ok=True)
+            # save the image
+            save_img_u8(rendering[0].permute(1,2,0).cpu().numpy(), save_path / f'{view.image_name}.png')
+            if save_depth:
+                depth_save_path.mkdir(parents=True, exist_ok=True)
+                depth_vis = depth[0].permute(1, 2, 0).expand(-1, -1, 3).cpu().numpy()
+                save_img_u8(depth_vis, depth_save_path / f'{view.image_name}.png')
+        view.image_height = old_image_height
+        view.image_width = old_image_width
+        return
+        
+        
 def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams, 
-                 skip_train: bool, skip_test: bool, save_results: bool = True, save_image: bool = False):
+                 skip_train: bool, skip_test: bool, save_results: bool = True, save_image: bool = False,
+                 save_depth: bool = False):
     """
     Evaluate metrics for train and test sets.
     
@@ -114,7 +164,7 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
         save_results: Whether to save results to JSON files
     """
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree)
+        gaussians = GaussianModel.from_model_params(dataset)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
         
         bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -137,6 +187,16 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
             train_mean, train_per_view = evaluate_set(
                 "train", train_views, gaussians, pipeline, background, save_path_train
             )
+            # render_set(
+            #     "train", train_views, gaussians, pipeline, background, save_path_train, factor=4, T_limit=0.4
+            # )
+            # render_set(
+            #     "train", train_views, gaussians, pipeline, background, save_path_train, factor=1, T_limit=0.5, save_depth=save_depth
+            # )
+            # render_set(
+            #     "train", train_views, gaussians, pipeline, background, save_path_train, factor=1, T_limit=0, save_depth=save_depth
+            # )
+            # return
             
             full_dict["train"] = train_mean
             per_view_dict["train"] = train_per_view
@@ -155,9 +215,17 @@ def evaluate_all(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
             test_views = scene.getTestCameras()
             save_path_test = save_path / "test" if save_path else None
             test_mean, test_per_view = evaluate_set(
-                "test", test_views, gaussians, pipeline, background, save_path_test
+                "test", test_views, gaussians, pipeline, background, save_path_test,
+                # save_depth=save_depth
             )
             
+            # render_set(
+            #     "test", test_views, gaussians, pipeline, background, save_path_test, factor=1, T_limit=0.5, save_depth=save_depth
+            # )
+            # render_set(
+            #     "test", test_views, gaussians, pipeline, background, save_path_test, factor=1, T_limit=0, save_depth=save_depth
+            # )
+        # return
             full_dict["test"] = test_mean
             per_view_dict["test"] = test_per_view
             
@@ -197,6 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true", help="Skip test set evaluation")
     parser.add_argument("--no_save", action="store_true", help="Do not save results to JSON files")
     parser.add_argument("--save_image", action="store_true", help="Save rendered images to disk", default=False)
+    parser.add_argument("--save_depth", action="store_true", help="Save depth maps to disk", default=False)
     parser.add_argument("--quiet", action="store_true", help="Suppress progress bars")
     args = get_combined_args(parser)
     
@@ -222,5 +291,6 @@ if __name__ == "__main__":
             args.skip_train, 
             args.skip_test,
             save_results=not args.no_save,
-            save_image=args.save_image
+            save_image=args.save_image,
+            save_depth=args.save_depth
         )

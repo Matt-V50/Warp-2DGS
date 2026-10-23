@@ -20,6 +20,18 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from warp_surfel_rasterization import KERNELS as WARP_KERNELS, CONTROL_POINTS as WARP_CONTROL_POINTS
+
+# Initial (post-sigmoid) inter point values per kernel; kernels not listed start at 0.5.
+WARP_INIT = {
+    "pwl2_mult":          [1/2, 2/3, 1/2, 2/3],
+    "pwl2_segment":       [0.5, 0.5, 1/3, 3/4],
+    "pwl3_asymmetric_y0": [0.0001],
+}
+# Kernels whose parameter is |sigmoid(x) * 2 - 1| instead of sigmoid(x), so 0.5 init maps to 0.
+WARP_ACTIVATION = {
+    "pwl_plateau": "abs",
+}
 
 class GaussianModel:
 
@@ -41,7 +53,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int, control_points : int=2, dof: int=2):
+    def __init__(self, sh_degree : int, kernel : str = "pwl_sr", rescale : float = 3.0, cutoff : float = -1.0, image_fitting : bool = False):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -57,10 +69,30 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
-        self.control_points = control_points
-        self.dof = dof  # Degrees of freedom: Pchip(2), SmoothSigmoid(1)
+        if kernel not in WARP_KERNELS:
+            raise ValueError(f"Unknown warp kernel '{kernel}', available: {list(WARP_KERNELS)}")
+        self.kernel = kernel
+        self.rescale = rescale
+        self.cutoff = cutoff
+        self.image_fitting = image_fitting
+        self.control_points = WARP_CONTROL_POINTS
+        self.dof = WARP_KERNELS[kernel]["dof"]
         self.dof_markers = ['x', 'y', 'z', 'a', 'b', 'c', 'd', 'e', 'f', 'g']
         self.setup_functions()
+
+    @classmethod
+    def from_model_params(cls, dataset):
+        # cfg_args written before the warp options existed carry no kernel; guessing one
+        # could silently load a model with the wrong kernel of the same DOF
+        kernel = getattr(dataset, "kernel", None)
+        if kernel is None:
+            raise ValueError("This model's cfg_args does not record a warp kernel, pass it with --kernel "
+                             f"(available: {list(WARP_KERNELS)})")
+        return cls(dataset.sh_degree,
+                   kernel=kernel,
+                   rescale=getattr(dataset, "rescale", None) or 3.0,
+                   cutoff=getattr(dataset, "cutoff", None) or -1.0,
+                   image_fitting=bool(getattr(dataset, "image_fitting", False)))
 
     def capture(self):
         return (
@@ -102,10 +134,16 @@ class GaussianModel:
     
     @property
     def get_rotation(self):
+        if self.image_fitting:
+            # keep splats facing the camera
+            self._rotation.data[:, 1:3] = 0.0
         return self.rotation_activation(self._rotation)
     
     @property
     def get_xyz(self):
+        if self.image_fitting:
+            # flatten onto the image plane, tiny offsets keep a strict depth order
+            self._xyz.data[:, 2] = torch.linspace(0, 1e-3, self._xyz.shape[0], device='cuda')
         return self._xyz
     
     @property
@@ -116,28 +154,15 @@ class GaussianModel:
     
     @property
     def get_opacity(self):
+        if self.image_fitting:
+            self._opacity.data = inverse_sigmoid(torch.ones_like(self._opacity.data)*0.99)
         return self.opacity_activation(self._opacity)
     
     @property
     def get_inter_points(self):
-        # 2DGS_dev_pwl4_to_pwl3_x2_3sigma
-        # self._inter_points.data[:, :, 0] = self._inter_points.data[:, :, 2]  # for pwl4, make x0 = y0, so pwl4(x0,x1,y0,y1) = pwl3(x1,y1)
-        
-        # return torch.abs(torch.sigmoid(self._inter_points) * 2 - 1)  # for pwl_abs
+        if WARP_ACTIVATION.get(self.kernel) == "abs":
+            return torch.abs(torch.sigmoid(self._inter_points) * 2 - 1)
         return torch.sigmoid(self._inter_points)
-        # fow pwl_clamp
-        # epsilon = 1e-5
-        # raw = torch.sigmoid(self._inter_points)
-        # x0 = raw[:, :, 0]
-        # x1 = torch.clamp(raw[:, :, 1], min=raw[:, :, 0] + epsilon)
-        # x1 = torch.clamp(x1, max=1.0 - epsilon)
-        # y0 = raw[:, :, 2]
-        # y1 = torch.clamp(raw[:, :, 3], min=raw[:, :, 2] + epsilon)
-        # y1 = torch.clamp(y1, max=1.0 - epsilon)
-        # points = torch.stack([x0, x1, y0, y1], dim=-1)
-        # return points
-        # return torch.asb(torch.sigmoid(self._inter_points) * 2 - 1)  # for pchip and smooth_sigmoid_symmetric
-        # return torch.log(self._inter_points) # for smooth_sigmoid_symmetric_k
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_xyz, self.get_scaling, scaling_modifier, self._rotation)
@@ -161,24 +186,10 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1,), dtype=torch.float, device="cuda"))
-        # pchip points initialized to 0.5, smooth sigmoid points initialized to -15 (after sigmoid activation -> 0.0003)
-        ### for pwl4_segment
-        # init_vals = torch.tensor([0.5, 0.5, 1/3, 3/4], dtype=torch.float, device="cuda")
-        ### for pwl4
-        # init_vals = torch.tensor([1/2, 2/3, 1/2, 2/3], dtype=torch.float, device="cuda")
-        ### for pwl4_clamp
-        # init_vals = torch.tensor([1/3, 2/3, 1/3, 2/3], dtype=torch.float, device="cuda")
-        ### for pwl3*, pwl_abs, (pwl_abs must use sigmoid(x)^2-0.25 to map x to 0)
-        init_vals = torch.tensor([0.5], dtype=torch.float, device="cuda")
-        ### for pwl4_fixed_x
-        # init_vals = torch.tensor([0.25, 0.75], dtype=torch.float, device="cuda")
-        ### for pwl5_asymmetric_y0
-        # init_vals = torch.tensor([0.0001], dtype=torch.float, device="cuda")
+        init_vals = torch.tensor(WARP_INIT.get(self.kernel, [0.5]), dtype=torch.float, device="cuda")
         inter_points = inverse_sigmoid(
             init_vals.expand(fused_point_cloud.shape[0], self.control_points, self.dof)
         )
-        # inter_points = inverse_sigmoid(0.00001 * torch.ones((fused_point_cloud.shape[0], self.control_points, self.dof), dtype=torch.float, device="cuda"))  # smooth_sigmoid_symmetric
-        # inter_points = torch.exp(torch.ones((fused_point_cloud.shape[0], self.control_points, self.dof), dtype=torch.float, device="cuda"))  # smooth_sigmoid_symmetric_k
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -308,6 +319,11 @@ class GaussianModel:
 
         self.control_points = max([int(s[1]) for s in inter_point_structure] + [-1]) + 1
         self.dof = len(set([s[0] for s in inter_point_structure]))
+        expected = (WARP_CONTROL_POINTS, WARP_KERNELS[self.kernel]["dof"])
+        if (self.control_points, self.dof) != expected:
+            raise ValueError(f"{path} stores inter points of shape (C={self.control_points}, DOF={self.dof}), "
+                             f"but kernel '{self.kernel}' expects (C={expected[0]}, DOF={expected[1]}). "
+                             f"Pass the --kernel this model was trained with.")
         if self.control_points > 0:
             inter_points = np.zeros((xyz.shape[0], self.control_points, self.dof))
             m = dict(zip(range(self.dof), self.dof_markers))

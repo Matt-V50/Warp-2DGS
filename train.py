@@ -117,7 +117,7 @@ class Logger:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
     
-    gaussians = GaussianModel(dataset.sh_degree, control_points=2, dof=1)
+    gaussians = GaussianModel.from_model_params(dataset)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -156,7 +156,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        
+        radii = render_pkg["original_radii"]
+        visibility_filter = render_pkg["original_visibility_filter"]
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
@@ -174,10 +175,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # loss
         total_loss = loss + dist_loss + normal_loss
-        try:
-            total_loss.backward()
-        except RuntimeError as e:
-            1+1
+        
+        total_loss.backward()
 
         # iter_end.record()
         timer.iter_end()
@@ -226,6 +225,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+            
+            if dataset.image_fitting and iteration % opt.opacity_reset_interval == 0 and iteration > 15_000:
+                gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < opt.iterations:
