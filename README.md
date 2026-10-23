@@ -5,7 +5,7 @@ CVISS Lab, University of Waterloo<br>
 **NeurIPS 2026 (Spotlight)**
 
 <!-- TODO: add [Paper](arXiv link) once it is online -->
-[NeurIPS page](https://neurips.cc/virtual/2026/loc/sydney/poster/153737) | [Rasterizer](https://github.com/Matt-V50/warp-surfel-rasterization)
+[Project page](https://matt-v50.github.io/Warp-2DGS/) | [NeurIPS page](https://neurips.cc/virtual/2026/loc/sydney/poster/153737) | [Rasterizer](https://github.com/Matt-V50/warp-surfel-rasterization)
 
 <p align="center">
   <img src="assets/teaser.png" width="100%" alt="2DGS vs Warp-2DGS on a synthetic 2D scene">
@@ -25,7 +25,8 @@ falloff, trained end to end with the rendering loss alone.
 ## Installation
 
 ```bash
-git clone --recursive https://github.com/Matt-V50/Warp-2DGS.git
+# --single-branch skips the gh-pages branch that hosts the project page
+git clone --recursive --single-branch https://github.com/Matt-V50/Warp-2DGS.git
 cd Warp-2DGS
 
 conda env create -f environment.yml
@@ -119,8 +120,9 @@ BlenderImage/<scene>/dataset                # single-image fitting (Figure 1)
 ```
 
 - [Mip-NeRF 360](https://jonbarron.info/mipnerf360/)
-- [Tanks and Temples](https://www.tanksandtemples.org/download/), including the ground truth for
-  the F1 evaluation
+- [Tanks and Temples](https://www.tanksandtemples.org/download/) for novel view synthesis, COLMAP-processed
+  as in [Pixel-GS](https://github.com/zhengzhang01/Pixel-GS); the official site also provides the
+  ground truth for the F1 evaluation
 - Preprocessed Tanks and Temples for meshing: [TnT_data](https://huggingface.co/datasets/ZehaoYu/gaussian-opacity-fields/tree/main)
   from Gaussian Opacity Fields
 
